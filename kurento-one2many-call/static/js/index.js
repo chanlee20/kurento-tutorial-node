@@ -114,7 +114,6 @@ function presenter() {
                         localVideo: video,
                         onicecandidate : onIceCandidate
                 }
-                console.log('hi');
 
                 webRtcPeer = kurentoUtils.WebRtcPeer.WebRtcPeerSendonly(options, function(error) {
                         if(error) return console.error(error);
@@ -165,12 +164,7 @@ function onOfferPresenter(error, offerSdp) {
 
 function onIceCandidate(candidate) {
 	console.log('Local candidate' + JSON.stringify(candidate));
-
-	var message = {
-	   id : 'onIceCandidate',
-	   candidate : candidate
-	}
-	sendMessage(message);
+        socketio.emit('onIceCandidate', {candidate : candidate});
 }
 
 function stop() {
