@@ -282,15 +282,17 @@ socket.on('viewer', function (data){
 		console.log("pressed viewer");
 		startViewer(socket, data.sdpOffer, function(error, sdpAnswer) {
 				response = (error) ? rejectPeerResponse('viewer', error) : acceptPeerResponse('viewer', sdpAnswer);
+				console.log(response);
 				socket.emit(response.id, response);
 		});
 });
 
 
 socket.on('merged_viewer', function (data){
-	console.log("pressed viewer");
-	startMergedViewer(socket, data.sdpOffer, data.room, function(error, sdpAnswer) {
+	console.log("pressed merged viewer");
+	startMergedViewer(socket, data.sdpOffer, data.c_room, data.access_room, function(error, sdpAnswer) {
 			response = (error) ? rejectPeerResponse('merged_viewer', error) : acceptPeerResponse('merged_viewer', sdpAnswer);
+			console.log(response);
 			socket.emit(response.id, response);
 	});
 });
@@ -304,6 +306,10 @@ socket.on('stop', function(){
 
 socket.on('onIceCandidate', function (data){
 		onIceCandidate(socket, data.candidate);
+});
+
+socket.on('onIceCandidate2', function (data){
+	onIceCandidate2(socket, data.candidate);
 });
 
 socket.on('subscribeToStream', function (data){
@@ -406,39 +412,36 @@ function startPresenter(socket, sdpOffer, callback) {
 							}
 
 							room.presenter.webRtcEndpoint = webRtcEndpoint;
+							console.log('here');
+							console.log(room.presenter.webRtcEndpoint);
 
-			if (candidatesQueue[socket.id]) {
-				while(candidatesQueue[socket.id].length) {
-					var candidate = candidatesQueue[socket.id].shift();
-					webRtcEndpoint.addIceCandidate(candidate);
-				}
-			}
+							if (candidatesQueue[socket.id]) {
+								while(candidatesQueue[socket.id].length) {
+									var candidate = candidatesQueue[socket.id].shift();
+									webRtcEndpoint.addIceCandidate(candidate);
+								}
+							}
 
-			webRtcEndpoint.on('OnIceCandidate', function(event) {
-				var candidate = kurento.register.complexTypes.IceCandidate(event.candidate);
-				socket.emit('iceCandidate', { candidate : candidate });
-			});
-
-							webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
-									if (error) {
-											stop(socket);
-											return callback(error);
-									}
-
-									if (room.presenter === null) {
-											stop(socket);
-											return callback(noPresenterMessage);
-									}
-
-									callback(null, sdpAnswer);
+							webRtcEndpoint.on('OnIceCandidate', function(event) {
+								var candidate = kurento.register.complexTypes.IceCandidate(event.candidate);
+								socket.emit('iceCandidate', { candidate : candidate });
 							});
 
-			webRtcEndpoint.gatherCandidates(function(error) {
-				if (error) {
-					stop(socket);
-					return callback(error);
-				}
-			});
+							webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
+								if (error) {
+									stop(socket);
+									return callback(error);
+								}
+
+								if (room.presenter === null) {
+									stop(socket);
+									return callback(noPresenterMessage);
+								}
+
+								callback(null, sdpAnswer);
+							});
+
+							webRtcEndpoint.gatherCandidates();
 		});
 	});
 	});
@@ -464,12 +467,11 @@ function startViewer(socket, sdpOffer, callback) {
                         "webRtcEndpoint" : webRtcEndpoint,
                         "socket" : socket
                 };
-
+				console.log(webRtcEndpoint);
                 if (room.presenter === null) {
                         stop(socket);
                         return callback(noPresenterMessage);
                 }
-
                 if (candidatesQueue[socket.id]) {
                         while(candidatesQueue[socket.id].length) {
                                 var candidate = candidatesQueue[socket.id].shift();
@@ -477,10 +479,11 @@ function startViewer(socket, sdpOffer, callback) {
                         }
                 }
 
-        webRtcEndpoint.on('OnIceCandidate', function(event) {
-            var candidate = kurento.register.complexTypes.IceCandidate(event.candidate);
-                        socket.emit('iceCandidate', { candidate : candidate });
-        });
+			webRtcEndpoint.on('OnIceCandidate', function(event) {
+				console.log('EXCHANGING CANDIDATes');
+				var candidate = kurento.register.complexTypes.IceCandidate(event.candidate);
+							socket.emit('iceCandidate', { candidate : candidate });
+			});
 
                 webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
                         if (error) {
@@ -503,12 +506,8 @@ function startViewer(socket, sdpOffer, callback) {
                                 }
 
                                 callback(null, sdpAnswer);
-                        webRtcEndpoint.gatherCandidates(function(error) {
-                            if (error) {
-                                    stop(socket.id);
-                                    return callback(error);
-                            }
-                        });
+								webRtcEndpoint.gatherCandidates();
+
 
 					});
 				});
@@ -516,46 +515,48 @@ function startViewer(socket, sdpOffer, callback) {
 	}
 
 
-function startMergedViewer(socket, sdpOffer, room, callback) {
+function startMergedViewer(socket, sdpOffer, merge_room, access_room, callback) {
 	console.log("start merging viewer");
-	console.log(room);
-	let real_room = rooms[room];
-	console.log(real_room);
+	let r1 = rooms[access_room];
+	let c_room = rooms[merge_room];
+	console.log(r1);
+	c_room.presenter = r1.presenter;
+	c_room.pipeline = r1.pipeline;
+	console.log(c_room);
 
-	socket.leave(socket.room);
-	socket.join(real_room);
-	socket.room = real_room;
+	// socket.leave(socket.room);
+	// socket.join(real_room);
+	// socket.room = real_room;
+	// socket.room.viewers.push(socket.id);
 	clearCandidatesQueue(socket);
-	// room = getRoom(socket);
-	// console.log( room);
-	// console.log( room.presenter);
-	
+	// console.log(real_room);
+	// console.log(real_room.viewers);
 
-	if (real_room.presenter === null) {
+	if (r1.presenter === null) {
 			stop(socket);
 			return callback(noPresenterMessage);
 	}
 
-	real_room.pipeline.create('WebRtcEndpoint', function(error, webRtcEndpoint) {
+	c_room.pipeline.create('WebRtcEndpoint', function(error, webRtcEndpoint) {
 			console.log('1');
 			if (error) {
 				console.log('error');
 					stop(socket);
 					return callback(error);
 				}
-                real_room.viewers[socket.id] = {
+                c_room.viewers[socket.id] = {
                         "webRtcEndpoint" : webRtcEndpoint,
                         "socket" : socket
                 };
-				console.log('2');
-                if (real_room.presenter === null) {
+				console.log(webRtcEndpoint);
+                if (r1.presenter === null) {
                         stop(socket);
                         return callback(noPresenterMessage);
                 }
 				console.log('3');
-
                 if (candidatesQueue[socket.id]) {
                         while(candidatesQueue[socket.id].length) {
+							console.log('adding ice candidate');
                                 var candidate = candidatesQueue[socket.id].shift();
                                 webRtcEndpoint.addIceCandidate(candidate);
                         }
@@ -563,6 +564,7 @@ function startMergedViewer(socket, sdpOffer, room, callback) {
 				console.log('4');
 
         webRtcEndpoint.on('OnIceCandidate', function(event) {
+			console.log('EXCHANGING CANDIDATES');
             var candidate = kurento.register.complexTypes.IceCandidate(event.candidate);
                         socket.emit('iceCandidate', { candidate : candidate });
         });
@@ -573,31 +575,27 @@ function startMergedViewer(socket, sdpOffer, room, callback) {
                                 stop(socket.id);
                                 return callback(error);
                         }
-                        if (real_room.presenter === null) {
+                        if (r1.presenter === null) {
                                 stop(socket.id);
                                 return callback(noPresenterMessage);
                         }
 						console.log('6');
 
-                        real_room.presenter.webRtcEndpoint.connect(webRtcEndpoint, function(error) {
+                        r1.presenter.webRtcEndpoint.connect(webRtcEndpoint, function(error) {
                                 if (error) {
                                         stop(socket.id);
                                         return callback(error);
                                 }
-                                if (real_room.presenter === null) {
+                                if (r1.presenter === null) {
                                         stop(socket.id);
                                         return callback(noPresenterMessage);
                                 }
 								console.log('7');
 
                                 callback(null, sdpAnswer);
-                        webRtcEndpoint.gatherCandidates(function(error) {
-                            if (error) {
-                                    stop(socket.id);
-                                    return callback(error);
-                            }
-                        });
-						console.log('8');
+								webRtcEndpoint.gatherCandidates();
+
+							console.log('8');
 
 					});
 				});
@@ -650,6 +648,32 @@ function startMergedViewer(socket, sdpOffer, room, callback) {
 	function onIceCandidate(socket, _candidate) {
 			var room = getRoom(socket);
 			var candidate = kurento.register.complexTypes.IceCandidate(_candidate);
+			console.log(candidate);
+			if (room.presenter && room.presenter.id === socket.id && room.presenter.webRtcEndpoint) {
+				console.info('Sending presenter candidate');
+				room.presenter.webRtcEndpoint.addIceCandidate(candidate);
+				console.log(candidate);
+			}
+			else if (room.viewers[socket.id] && room.viewers[socket.id].webRtcEndpoint) {
+				console.info('Sending viewer candidate');
+				console.log(candidate);
+						room.viewers[socket.id].webRtcEndpoint.addIceCandidate(candidate);
+			}
+			else {
+				console.info('Queueing candidate');
+				if (!candidatesQueue[socket.id]) {
+					candidatesQueue[socket.id] = [];
+				}
+				candidatesQueue[socket.id].push(candidate);
+			}
+		}
+
+		function onIceCandidate2(socket, _candidate) {
+			console.log('onice2');
+			let m_room = rooms['r1'];
+			var room = getRoom(socket);
+			var candidate = kurento.register.complexTypes.IceCandidate(_candidate);
+			console.log(candidate);
 
 			if (room.presenter && room.presenter.id === socket.id && room.presenter.webRtcEndpoint) {
 				console.info('Sending presenter candidate');
