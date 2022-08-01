@@ -1,7 +1,7 @@
 /*
  * (C) Copyright 2014-2015 Kurento (http://kurento.org/)
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
+ * Lnsed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -45,45 +45,6 @@ window.onload = function() {
         document.getElementById('terminate').addEventListener('click', function() { stop(); } );
 }
 
-// window.onbeforeunload = function() {
-//         ws.close();
-// }
-
-// .onmessage = function(message) {
-//         var parsedMessage = JSON.parse(message.data);
-//         console.info('Received message: ' + message.data);
-
-//         switch (parsedMessage.id) {
-// 		case 'presenterResponse':
-// 	            presenterResponse(parsedMessage);
-//                 break;
-//         case 'viewerResponse':
-//                 viewerResponse(parsedMessage);
-//                 break;
-//         case 'stopCommunication':
-//                 dispose();
-//                 break;
-//         case 'iceCandidate':
-//                 webRtcPeer.addIceCandidate(parsedMessage.candidate)
-//                 break;
-//         default:
-//                 console.error('Unrecognized message', parsedMessage);
-//         }
-//  }
-
-
-// function call() {
-//     startTime = window.performance.now();
-//     const videoTracks = localStream.getVideoTracks();
-//     const audioTracks = localStream.getAudioTracks();
-//   if (videoTracks.length > 0) {
-//     console.log(`Using video device: ${videoTracks[0].label}`);
-//   }
-//   if (audioTracks.length > 0) {
-//     console.log(`Using audio device: ${audioTracks[0].label}`);
-//   }
-//   const configuration = {};;
-// }
 
 var socketio = io.connect();
 socketio.on('connect', function() {
@@ -141,6 +102,12 @@ socketio.on('viewerResponse', function(data) {
 	viewerResponse(data);
 });
 
+socketio.on('merged_viewerResponse', function(data) {
+        console.log('MERGE RESPOND!');
+	viewerMergedResponse(data);
+});
+
+
 socketio.on('stopCommunication', function(data) {
 	console.log('stopCommunication');
 	dispose();
@@ -174,6 +141,7 @@ function presenterResponse(message) {
 }
 
 function viewerResponse(message) {
+        console.log("VIEWER RESPONSE");
         if (message.response != 'accepted') {
                 var errorMsg = message.message ? message.message : 'Unknow error';
                 console.warn('Call not accepted for the following reason: ' + errorMsg);
@@ -183,16 +151,31 @@ function viewerResponse(message) {
         }
 }
 
+function viewerMergedResponse(message) {
+        console.log("MERGED VIEWER RESPONSE");
+        if (message.response != 'accepted') {
+                var errorMsg = message.message ? message.message : 'Unknow error';
+                console.warn('Call not accepted for the following reason: ' + errorMsg);
+                dispose();
+        } else {
+                console.log('response good');
+                webRtcPeer.processAnswer(message.sdpAnswer, function(error){
+                        if(error) return console.error(error);
+                });
+        }
+}
+
 function mergeRoom(data) {
         let x = document.getElementById('video');
         x.remove();
         let y = document.getElementById('viewer');
+        y.remove();
         // <a id="viewer" href="#" class="btn btn-primary" value = "viewer">
         // <span class="glyphicon glyphicon-user"></span> Viewer</a>
-        y.innerHTML ='<a id = "merged_viewer_btn" href = "#" class = "btn btn-primary" value = "viewer"> <span class = "glyphicon glyphicon-user"></span> Viewer</a>'
-        document.getElementById("merged_viewer_btn").addEventListener('click', function() {
-                mergedViewer(data);
-        })
+        let z = document.createElement('a');
+        document.getElementById('main_buttons').appendChild(z);
+        z.innerHTML ='<a id = "merged_viewer_btn" href = "#" class = "btn btn-primary" value = "viewer"> <span class = "glyphicon glyphicon-user"></span> Viewer</a>'
+        
 
         //collect the boxes that were checked and then make a new room that contians those data and streams those data
        let selected_rooms = [];
@@ -203,8 +186,8 @@ function mergeRoom(data) {
                         let x = document.createElement('video');
                         // autoplay width="854px" height="480px" poster="img/webrtc.png"
                         x.setAttribute('id', 'vid_'+data[i]);
-                        x.style.width = 854 + 'px';
-                        x.style.height = 480 + 'px';
+                        x.width = 854;
+                        x.height = 480;
                         x.poster = 'img/webrtc.png';
                         document.getElementById('videoBig').appendChild(x);
                 }
@@ -213,79 +196,55 @@ function mergeRoom(data) {
         socketio.emit("join_MergeRoom", {
                 selected_rooms: selected_rooms
         });
-        console.log("SEL ROOMSL " + selected_rooms);
+        console.log("SEL ROOMS " + selected_rooms);
+        document.getElementById("merged_viewer_btn").addEventListener('click', function() {
+                mergedViewer(data);
+        });
 }
 
 function mergedViewer(data) {
         autoView = true;
-        for(let i = 0; i < data.length; i++){
-                console.log( ' MV ' +data[i]);
-                video = document.getElementById("vid_" + data[i]);
-                console.log('VP' + video.poster);
-                cur_room = data[i];
+                let video2 = document.getElementById('vid_r1');
+                //console.log( ' MV ' +data[i]);
+                // let video2 = document.getElementById("vid_r1");
+                // console.log(video2.id);
+                // console.log('VP' + video2.poster);
+                //cur_room = data[i];
                 if (!webRtcPeer) {
-                        showSpinner(video);
-        
-                        
-        
+                        showSpinner(video2);
                         var options = {
-                                remoteVideo: video,
-                                onicecandidate : onIceCandidate
+                                remoteVideo: video2,
+                                onicecandidate : onIceCandidate2
                         }
         
                         webRtcPeer = kurentoUtils.WebRtcPeer.WebRtcPeerRecvonly(options, function(error) {
-                                if(error) return onError(error);
+                                if(error) return console.error(error);
         
                                 this.generateOffer(onOfferMergedViewer);
                         });
                 }
-        }
+        
 }
 
 function onOfferMergedViewer(error, offerSdp) {
-        console.log(cur_room);
-    
-        if (error) return onError(error)
+        //console.log(cur_room);
+        let c_room = "Merged Room";
+        let access_room = "r1";
+        if (error) return console.error(error);
     
             var message = {
                     sdpOffer : offerSdp,
-                    room: cur_room
+                    c_room: c_room,
+                    access_room: access_room
             }
             socketio.emit('merged_viewer', message);
-        }
-
-
-function presenter() {
-        if (!webRtcPeer) {
-                //generate sdp stream and start video
-                showSpinner(video);
-
-                var options = {
-                        localVideo: video,
-                        onicecandidate : onIceCandidate
-                }
-                
-                // socketio.emit("genPipe_to_server", {})
-
-                webRtcPeer = kurentoUtils.WebRtcPeer.WebRtcPeerSendonly(options, function(error) {
-                        if(error) return onError(error);
-
-                        this.generateOffer(onOfferPresenter);
-                });
-        }
 }
-function onOfferPresenter(error, offerSdp) {
-    let cur_room = document.getElementById('current_room').value; 
-    if (error) return onError(error);
 
-        var message = {
-                sdpOffer : offerSdp,
-                room: cur_room
-        };
-        socketio.emit('presenter', message);
-    }
+
 
 function viewer() {
+        console.log("I AM VIEWER");
+        console.log(video.poster);
         autoView = true;
         if (!webRtcPeer) {
                 showSpinner(video);
@@ -298,7 +257,7 @@ function viewer() {
                 }
 
                 webRtcPeer = kurentoUtils.WebRtcPeer.WebRtcPeerRecvonly(options, function(error) {
-                        if(error) return onError(error);
+                        if(error) return console.error(error);
 
                         this.generateOffer(onOfferViewer);
                 });
@@ -308,7 +267,7 @@ function viewer() {
 function onOfferViewer(error, offerSdp) {
     console.log("onOfferViewer: "  + cur_room);
 
-    if (error) return onError(error)
+    if (error) return console.error(error);
 
         var message = {
                 sdpOffer : offerSdp,
@@ -318,13 +277,13 @@ function onOfferViewer(error, offerSdp) {
     }
 
 function onIceCandidate(candidate) {
-	console.log('Local candidate' + JSON.stringify(candidate));
+	//  console.log('Local candidate' + JSON.stringify(candidate));
+         socketio.emit('onIceCandidate', {candidate : candidate});
+}
 
-	var message = {
-	   id : 'onIceCandidate',
-	   candidate : candidate
-	}
-	sendMessage(message);
+function onIceCandidate2(candidate) {
+        console.log('Local candidate' + JSON.stringify(candidate));
+        socketio.emit('onIceCandidate2', {candidate : candidate});
 }
 
 function stop() {
