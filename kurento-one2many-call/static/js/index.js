@@ -32,6 +32,17 @@ var video;
 var webRtcPeer;
 var room;
 var socketio = io.connect();
+var webRtc;
+
+var constraints = {
+        audio: true,
+        video: {
+          width: 1280,
+          height: 720,
+          framerate: 30
+        }
+    };
+
 socketio.on('connect', function() {
         socketio.emit('addRoom', prompt('Set your room name: '));
 });
@@ -44,6 +55,20 @@ socketio.on("updateRooms_presenter", function(data){
         console.log("list of rooms: " + data);
         document.getElementById("all_rooms").innerHTML = "<div id = 'all_rooms'>" + data + "</div>";
     
+});
+
+
+socketio.on('reload', function() {
+        console.log('reloading...');
+        alert("Room Name Already Exists. Please Try Again.");
+        socketio.disconnect();
+        window.location.reload();
+});
+
+socketio.on('null_reload', function() {
+        console.log('reloading...');
+        alert("Enter Room Name Please.");
+        socketio.disconnect();
 });
 
 socketio.on('disconnect', function(){
@@ -78,12 +103,37 @@ socketio.on('iceCandidate', function(data) {
 window.onload = function() {
         console = new Console();
         video = document.getElementById('video');
+        videoOutput= document.getElementById('videoOutput');
         room = $('#current_room');
         document.getElementById('call').addEventListener('click', function(e) { presenter(); e.preventDefault(); } );
-        // document.getElementById('viewer').addEventListener('click', function() { viewer(); } );
+        // document.getElementById('play').addEventListener('click', function() { play(); } );
         document.getElementById('terminate').addEventListener('click', function() { stop(); } );
 }
 
+
+function play() {
+        showSpinner(videoOutput);
+
+        var options = 
+        {
+                localVideo: video,
+                remoteVideo: videoOutput
+        }
+
+        webRtcPeer = kurentoUtils.WebRtcPeer.WebRtcPeerRecvonly(options, function(error){
+                if(error) return console.error(error);
+                this.generateOffer(onOfferPlayer)
+        });
+}
+
+function onOfferPlayer(error, sdpOffer){
+        if(error) return console.error(error);
+
+        var message = {
+                sdpOffer: sdpOffer
+        };
+        socketio.emit('player', message);
+}
 
 function presenterResponse(message) {
         if (message.response != 'accepted') {
@@ -92,18 +142,9 @@ function presenterResponse(message) {
                 dispose();
         } else {
                 webRtcPeer.processAnswer(message.sdpAnswer);
+                socketio.emit('record');
         }
 }
-
-// function viewerResponse(message) {
-//         if (message.response != 'accepted') {
-//                 var errorMsg = message.message ? message.message : 'Unknow error';
-//                 console.warn('Call not accepted for the following reason: ' + errorMsg);
-//                 dispose();
-//         } else {
-//                 webRtcPeer.processAnswer(message.sdpAnswer);
-//         }
-// }
 
 function presenter() {
         if (!webRtcPeer) {
@@ -112,13 +153,12 @@ function presenter() {
 
                 var options = {
                         localVideo: video,
+                        remoteVideo: videoOutput,
                         onicecandidate : onIceCandidate
                 }
 
                 webRtcPeer = kurentoUtils.WebRtcPeer.WebRtcPeerSendonly(options, function(error) {
                         if(error) return console.error(error);
-                        console.log('hi');
-
                         this.generateOffer(onOfferPresenter);
                 });
         }
@@ -134,33 +174,6 @@ function onOfferPresenter(error, offerSdp) {
             socketio.emit('presenter', message);
 }
 
-// function viewer() {
-//         if (!webRtcPeer) {
-//                 showSpinner(video);
-
-//                 var options = {
-//                         remoteVideo: video,
-//                         onicecandidate : onIceCandidate
-//                 }
-
-//                 webRtcPeer = kurentoUtils.WebRtcPeer.WebRtcPeerRecvonly(options, function(error) {
-//                         if(error) return onError(error);
-
-//                         this.generateOffer(onOfferViewer);
-//                 });
-//         }
-// }
-
-// function onOfferViewer(error, offerSdp) {
-//         let cur_room = document.getElementById('current_room');    
-//         if (error) return onError(error)
-    
-//             var message = {
-//                     sdpOffer : offerSdp,
-//                     room: cur_room
-//             }
-//             socketio.emit('viewer', message);
-// }
 
 function onIceCandidate(candidate) {
 	console.log('Local candidate' + JSON.stringify(candidate));
@@ -168,6 +181,7 @@ function onIceCandidate(candidate) {
 }
 
 function stop() {
+        console.log('stop');
  if (webRtcPeer) {
 		 var message = {
 		        id : 'stop'
@@ -175,6 +189,7 @@ function stop() {
 		 sendMessage(message);
 		 dispose();
  }
+ socketio.emit('release_pipeline');
 }
 
 function dispose() {
