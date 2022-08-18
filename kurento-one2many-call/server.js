@@ -28,7 +28,7 @@ var https = require('https');
 var argv = minimist(process.argv.slice(2), {
     default: {
         as_uri: 'https://localhost:8443/',
-        ws_uri: 'ws://localhost:8888/kurento'
+        ws_uri: 'ws://localhost:8888/kurento',
     }
 });
 
@@ -49,6 +49,8 @@ var noPresenterMessage = 'No active presenter. Try again later...';
 var anotherPresenterIsActive = "Another user is currently acting as presenter. Try again later ...";
 let listofRoomsButton = [];
 var rooms = [];
+let listofMergedRooms = [];
+
 /*
  * Server startup
  */
@@ -79,8 +81,10 @@ function getRoom(socket) {
         }
         return rooms[socket.room];
 }
+
 function createRoom(room) {
 	rooms[room] = {
+			room_name: room,
 			presenter: null,
 			pipeline: null,
 			viewers: [],
@@ -88,13 +92,29 @@ function createRoom(room) {
 	};
 }
 
+
 function createButtons() {
 	let c = 0;
+	let status = true;
 	for(let i in rooms){
 		console.log("creating buttons ... ");
-		listofRoomsButton[c] = "" + i;
-		c++;
+		let s = "" + i;
+		for(let j = 0; j < listofMergedRooms.length; j++){
+			console.log(s);
+			console.log(listofMergedRooms[j]);
+			if(s != listofMergedRooms[j]){
+				status = true;
+			}
+			else{
+				status = false;
+			}
+		}
+		if(status == true && s != "undefined"){
+			listofRoomsButton[c] = "" + i;
+			c++;
+		}
 	}
+	console.log(listofRoomsButton);
 }
 
 
@@ -145,17 +165,32 @@ function rejectPeerResponse(peerType, reason) {
 
 
 //no duplicate presenters
-function checkDuplicateRooms(roomName) {
-	for(var i = 0; i < rooms.length; i++){
-		if(roomName == rooms[i]){
-			try {
-				throw new Error('Whoops!')
-			  } catch (e) {
-				console.error('duplicate room!');
-			  }
-		}
+function checkDuplicateRooms(socket, roomName) {
+	console.log("hi");	
+	let duplicate = false;
+	if(rooms[roomName] == undefined){
+		console.log('all good');
+		return duplicate
+	}
+	else{
+		console.log("Room already exists. Please try again.");
+		// socket.connect();
+		duplicate = true;
+		socket.emit('reload');
+		return duplicate;
+		// Location.reload();
+		// stop(socket);
 	}
 }
+
+// function checkNullRooms(socket, roomName){
+// 	console.log(roomName);
+// 	console.log('checkNullRooms');
+// 	if(roomName == null){
+// 		console.log('checkNullRooms2');
+// 		socket.emit('null_reload');
+// 	}
+// }
 
 function arrayRemove(arr, value) { 
     
@@ -171,25 +206,42 @@ io.on('connection', function(socket) {
 console.log('Connection received with sessionId - ' + socket.id);
 
 socket.on('addRoom', function(roomName) {
-	checkDuplicateRooms(roomName);
 	console.log('user created room: ' + roomName);
-	createRoom(roomName);
-	socket.room = roomName;
-	while(socket.rooms.length) {
-		socket.leave(socket.rooms[0]);
+	if(roomName === null || roomName === undefined){
+		console.log("JERE");
+		socket.emit('null_reload');
 	}
-	socket.join(socket.room);
-	rooms[roomName].presenter = socket.id;
-	console.log(rooms[roomName]);
-	let listofRooms = "";
-	for(let i in rooms){
-		listofRooms += i + " ";
+	else {
+		if(checkDuplicateRooms(socket, roomName)==false){
+			if(roomName != "undefined"){
+				createRoom(roomName);
+			}
+			socket.room = roomName;
+			while(socket.rooms.length) {
+				socket.leave(socket.rooms[0]);
+			}
+			socket.join(socket.room);
+			rooms[roomName].presenter = socket.id;
+			console.log(rooms[roomName]);
+			let listofRooms = "";
+			for(let i in rooms){
+				if(i == "undefined"){
+					console.log('it is undefined');
+				}
+				else{
+					console.log(i);
+					listofRooms += i + " ";
+				}
+			}
+			createButtons(socket);
+			io.sockets.in(socket.room).emit('currentRoom', roomName);
+			io.emit('updateRooms_presenter', listofRooms);
+			io.emit('updateRooms_viewer', listofRoomsButton);	
+		}
+		else{
+			console.log("it is duplicated");
+		}
 	}
-	createButtons();
-	io.sockets.in(socket.room).emit('currentRoom', roomName);
-	io.emit('updateRooms_presenter', listofRooms);
-	io.emit('updateRooms_viewer', listofRoomsButton);
-
 })
 
 socket.on('Init_joinRoom', function(roomName){
@@ -202,10 +254,9 @@ socket.on('Init_joinRoom', function(roomName){
 	socket.join(roomName);
 	rooms[roomName].viewers.push(socket.id);
 	console.log(rooms[roomName]);
-	createButtons();
+	createButtons(socket);
+	io.emit('updateRooms_viewer', listofRoomsButton);	
 	io.sockets.in(socket.room).emit('currentRoom', roomName);
-	io.emit('updateRooms_viewer', listofRoomsButton);
-
 })
 
 socket.on('joinRoom_to_server', function(data){
@@ -227,7 +278,8 @@ socket.on('joinRoom_to_server', function(data){
 socket.on('join_MergeRoom', function(data){
 	let selected_rooms = data["selected_rooms"];
 	let id = socket.id;
-	let roomname = 'Merged Room';
+	let roomname = 'Merged Room ' + id;
+	listofMergedRooms.push(roomname);
 	let new_presenters = [];
 	rooms[socket.room].viewers = arrayRemove(rooms[socket.room].viewers, id);
 	socket.leave(socket.room);
@@ -239,14 +291,12 @@ socket.on('join_MergeRoom', function(data){
 	socket.join(socket.room);
 	rooms[roomname].viewers.push(id);
 
-
 	for(let i = 0; i < selected_rooms.length; i++){
 		new_presenters[i] = rooms[selected_rooms[i]].presenter;
 	}
 	rooms[roomname].presenter = new_presenters;
 	io.to(id).emit("currentRoom", selected_rooms);
-	createButtons();
-	io.emit('updateRooms_viewer', listofRoomsButton);
+	io.to(id).emit("updateRooms_mergeViewer", roomname);	
 	console.log("SELECTED ROOMS: "+ selected_rooms);
 	console.log("current room is " + socket.room);
 	console.log(rooms[roomname].presenter);
@@ -264,7 +314,27 @@ console.log('Connection ' + socket.id + ' closed');
 stop(socket);
 });
 
+socket.on('release_pipeline', function() {
+	room = getRoom(socket);
+	if(room.pipeline){
+		room.pipeline.release();
+		room.pipeline = null;
+	}
+})
+
 // Handle events from clients
+socket.on('player', function(data){
+	console.log("pressed player");
+	startPlayer(socket, data.sdpOffer, function(error, sdpAnswer){
+		var response = (error) ? rejectPeerResponse('player', error) : acceptPeerResponse('player', sdpAnswer);
+		socket.emit(response.id, response);
+		if (!error) {
+				console.log(socket.id + ' starting playing to ' + socket.room + ' room');
+				// socket.broadcast.emit('streamStarted');
+		}	
+	});
+})
+
 socket.on('presenter', function (data) {
 	console.log("pressed presenter");
 	console.log(rooms[socket.room]);
@@ -282,23 +352,17 @@ socket.on('viewer', function (data){
 		console.log("pressed viewer");
 		startViewer(socket, data.sdpOffer, function(error, sdpAnswer) {
 				response = (error) ? rejectPeerResponse('viewer', error) : acceptPeerResponse('viewer', sdpAnswer);
-				console.log(response);
 				socket.emit(response.id, response);
 		});
 });
 
-
 socket.on('merged_viewer', function (data){
 	console.log("pressed merged viewer");
-	startMergedViewer(socket, data.sdpOffer, data.c_room, data.access_room, function(error, sdpAnswer) {
+	startMergedViewer(socket, data.sdpOffer, data.access_room, function(error, sdpAnswer) {
 			response = (error) ? rejectPeerResponse('merged_viewer', error) : acceptPeerResponse('merged_viewer', sdpAnswer);
-			console.log(response);
 			socket.emit(response.id, response);
 	});
 });
-
-
-
 
 socket.on('stop', function(){
 		stop(socket);
@@ -330,6 +394,10 @@ socket.on('chat:newMessage', function(message) {
 	newChatMessage(socket, message);
 });
 
+socket.on('record', function() {
+	record(socket);
+})
+
 socket.on('chat:loadMessages', function() {
 	var room = getRoom(socket);
 
@@ -350,27 +418,45 @@ function getKurentoClient(callback) {
 		return callback(null, kurentoClient);
 	}
 
-kurento(argv.ws_uri, function(error, _kurentoClient) {
-if (error) {
-console.log("Could not find media server at address " + argv.ws_uri);
-return callback("Could not find media server at address" + argv.ws_uri
-		+ ". Exiting with error " + error);
+	kurento(argv.ws_uri, function(error, _kurentoClient) {
+	if (error) {
+	console.log("Could not find media server at address " + argv.ws_uri);
+	return callback("Could not find media server at address" + argv.ws_uri
+			+ ". Exiting with error " + error);
+	}
+
+	kurentoClient = _kurentoClient;
+	callback(null, kurentoClient);
+	});
 }
 
-kurentoClient = _kurentoClient;
-callback(null, kurentoClient);
-});
+function startPlayer(socket, sdpOffer, callback){
+	clearCandidatesQueue(socket);
+	room = getRoom(socket);
+	getKurentoClient(function(error, kurentoClient){
+		if(error){
+			stop(socket);
+			return callback(error);
+		}
+
+		var player = room.pipeline.create('PlayerEndpoint', {uri: argv.file_uri}); 
+		player.on('EndOfStream', stop);
+		player.connect(room.presenter.webRtcEndpoint, function(error) {
+			if (error) {
+				stop(socket.id);
+				return callback(error);
+			}
+			console.log(player);
+			player.play();
+		})
+
+	})
 }
 
 function startPresenter(socket, sdpOffer, callback) {
 	clearCandidatesQueue(socket);
 
 	var room = getRoom(socket);
-
-	// if (room.presenter !== null) {
-	// 		stop(socket);
-	// 		return callback(anotherPresenterIsActive);
-	// }
 
 	room.presenter = {
 			webRtcEndpoint : null,
@@ -414,10 +500,13 @@ function startPresenter(socket, sdpOffer, callback) {
 							room.presenter.webRtcEndpoint = webRtcEndpoint;
 							console.log('here');
 							console.log(room.presenter.webRtcEndpoint);
+							console.log(room.pipeline);
 
 							if (candidatesQueue[socket.id]) {
+								console.log("OMG ");
 								while(candidatesQueue[socket.id].length) {
 									var candidate = candidatesQueue[socket.id].shift();
+									console.log(candidate);
 									webRtcEndpoint.addIceCandidate(candidate);
 								}
 							}
@@ -442,16 +531,37 @@ function startPresenter(socket, sdpOffer, callback) {
 							});
 
 							webRtcEndpoint.gatherCandidates();
+			});
 		});
+
+		
+		// room.presenter.webRtcEndpoint.connect(recorder);
 	});
-	});
+}
+
+function record(socket) {
+	room = getRoom(socket);
+	argv.file_uri = 'file:///tmp/' + room.room_name + '.webm';
+	var recorder = room.pipeline.create('RecorderEndpoint', {uri: argv.file_uri});
+		console.log(room.presenter.webRtcEndpoint);
+		room.presenter.webRtcEndpoint.connect(recorder, function(error) {
+			if (error) {
+					stop(socket.id);
+					return callback(error);
+			}
+			if (room.presenter === null) {
+					stop(socket.id);
+					return callback(noPresenterMessage);
+			}
+			recorder.record();
+		});
+		console.log(recorder);
 }
 
 function startViewer(socket, sdpOffer, callback) {
 	clearCandidatesQueue(socket);
 	room = getRoom(socket);
 	console.log( room);
-	console.log( room.presenter);
 
 	if (room.presenter === null) {
 			stop(socket);
@@ -475,12 +585,12 @@ function startViewer(socket, sdpOffer, callback) {
                 if (candidatesQueue[socket.id]) {
                         while(candidatesQueue[socket.id].length) {
                                 var candidate = candidatesQueue[socket.id].shift();
+								console.log(candidate);
                                 webRtcEndpoint.addIceCandidate(candidate);
                         }
                 }
 
 			webRtcEndpoint.on('OnIceCandidate', function(event) {
-				console.log('EXCHANGING CANDIDATes');
 				var candidate = kurento.register.complexTypes.IceCandidate(event.candidate);
 							socket.emit('iceCandidate', { candidate : candidate });
 			});
@@ -514,94 +624,79 @@ function startViewer(socket, sdpOffer, callback) {
 			});
 	}
 
+	function startMergedViewer(socket, sdpOffer, access_room, callback) {
 
-function startMergedViewer(socket, sdpOffer, merge_room, access_room, callback) {
-	console.log("start merging viewer");
-	let r1 = rooms[access_room];
-	let c_room = rooms[merge_room];
-	console.log(r1);
-	c_room.presenter = r1.presenter;
-	c_room.pipeline = r1.pipeline;
-	console.log(c_room);
-
-	// socket.leave(socket.room);
-	// socket.join(real_room);
-	// socket.room = real_room;
-	// socket.room.viewers.push(socket.id);
-	clearCandidatesQueue(socket);
-	// console.log(real_room);
-	// console.log(real_room.viewers);
-
-	if (r1.presenter === null) {
-			stop(socket);
-			return callback(noPresenterMessage);
-	}
-
-	c_room.pipeline.create('WebRtcEndpoint', function(error, webRtcEndpoint) {
-			console.log('1');
-			if (error) {
-				console.log('error');
-					stop(socket);
-					return callback(error);
-				}
-                c_room.viewers[socket.id] = {
-                        "webRtcEndpoint" : webRtcEndpoint,
-                        "socket" : socket
-                };
-				console.log(webRtcEndpoint);
-                if (r1.presenter === null) {
-                        stop(socket);
-                        return callback(noPresenterMessage);
-                }
-				console.log('3');
-                if (candidatesQueue[socket.id]) {
-                        while(candidatesQueue[socket.id].length) {
-							console.log('adding ice candidate');
-                                var candidate = candidatesQueue[socket.id].shift();
-                                webRtcEndpoint.addIceCandidate(candidate);
-                        }
-                }
-				console.log('4');
-
-        webRtcEndpoint.on('OnIceCandidate', function(event) {
-			console.log('EXCHANGING CANDIDATES');
-            var candidate = kurento.register.complexTypes.IceCandidate(event.candidate);
-                        socket.emit('iceCandidate', { candidate : candidate });
-        });
-		console.log('5');
-
-                webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
-                        if (error) {
-                                stop(socket.id);
-                                return callback(error);
-                        }
-                        if (r1.presenter === null) {
-                                stop(socket.id);
-                                return callback(noPresenterMessage);
-                        }
-						console.log('6');
-
-                        r1.presenter.webRtcEndpoint.connect(webRtcEndpoint, function(error) {
-                                if (error) {
-                                        stop(socket.id);
-                                        return callback(error);
-                                }
-                                if (r1.presenter === null) {
-                                        stop(socket.id);
-                                        return callback(noPresenterMessage);
-                                }
-								console.log('7');
-
-                                callback(null, sdpAnswer);
-								webRtcEndpoint.gatherCandidates();
-
-							console.log('8');
-
+		let r1 = rooms[access_room];
+		room = getRoom(socket);
+		console.log(r1.pipeline);
+		room.presenter = r1.presenter; 
+		room.pipeline = r1.pipeline;
+		clearCandidatesQueue(socket);
+		console.log(room);
+		console.log(r1);
+		if (room.presenter === null) {
+				stop(socket);
+				return callback(noPresenterMessage);
+		}
+	
+		room.pipeline.create('WebRtcEndpoint', function(error, webRtcEndpoint) {
+				if (error) {
+						stop(socket);
+						return callback(error);
+					}
+					room.viewers[socket.id] = {
+							"webRtcEndpoint" : webRtcEndpoint,
+							"socket" : socket
+					};
+					console.log(webRtcEndpoint);
+					if (room.presenter === null) {
+							stop(socket);
+							return callback(noPresenterMessage);
+					}
+					if (candidatesQueue[socket.id]) {
+						console.log("OMG2!!!!!");
+							while(candidatesQueue[socket.id].length) {
+									var candidate = candidatesQueue[socket.id].shift();
+									console.log(candidate);
+									webRtcEndpoint.addIceCandidate(candidate);
+							}
+					}
+	
+				webRtcEndpoint.on('OnIceCandidate', function(event) {
+					var candidate = kurento.register.complexTypes.IceCandidate(event.candidate);
+								socket.emit('iceCandidate', { candidate : candidate });
+				});
+	
+					webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
+							if (error) {
+									stop(socket.id);
+									return callback(error);
+							}
+							if (room.presenter === null) {
+									stop(socket.id);
+									return callback(noPresenterMessage);
+							}
+	
+							room.presenter.webRtcEndpoint.connect(webRtcEndpoint, function(error) {
+									if (error) {
+											stop(socket.id);
+											return callback(error);
+									}
+									if (room.presenter === null) {
+											stop(socket.id);
+											return callback(noPresenterMessage);
+									}
+	
+									callback(null, sdpAnswer);
+									webRtcEndpoint.gatherCandidates();
+	
+	
+						});
 					});
 				});
-			});
-	}
+		}
 	
+
 	function clearCandidatesQueue(socket) {
 			if (candidatesQueue[socket.id]) {
 					delete candidatesQueue[socket.id];
@@ -633,7 +728,6 @@ function startMergedViewer(socket, sdpOffer, merge_room, access_room, callback) 
 	
 			room.presenter.webRtcEndpoint.release();
 			room.presenter = null;
-			room.pipeline.release();
 			room.viewers = [];
 	}
 	
@@ -652,19 +746,22 @@ function startMergedViewer(socket, sdpOffer, merge_room, access_room, callback) 
 			if (room.presenter && room.presenter.id === socket.id && room.presenter.webRtcEndpoint) {
 				console.info('Sending presenter candidate');
 				room.presenter.webRtcEndpoint.addIceCandidate(candidate);
-				console.log(candidate);
+				// if(m_room.presenter){
+				// 	m_room.presenter.webRtcEndpoint.addIceCandidate(candidate);
+				// }
 			}
 			else if (room.viewers[socket.id] && room.viewers[socket.id].webRtcEndpoint) {
 				console.info('Sending viewer candidate');
-				console.log(candidate);
-						room.viewers[socket.id].webRtcEndpoint.addIceCandidate(candidate);
+				room.viewers[socket.id].webRtcEndpoint.addIceCandidate(candidate);
 			}
 			else {
 				console.info('Queueing candidate');
 				if (!candidatesQueue[socket.id]) {
+					console.log('REALLLY!');
 					candidatesQueue[socket.id] = [];
 				}
 				candidatesQueue[socket.id].push(candidate);
+				
 			}
 		}
 
@@ -673,19 +770,20 @@ function startMergedViewer(socket, sdpOffer, merge_room, access_room, callback) 
 			let m_room = rooms['r1'];
 			var room = getRoom(socket);
 			var candidate = kurento.register.complexTypes.IceCandidate(_candidate);
-			console.log(candidate);
-
+			console.log("RN!");
 			if (room.presenter && room.presenter.id === socket.id && room.presenter.webRtcEndpoint) {
 				console.info('Sending presenter candidate');
 				room.presenter.webRtcEndpoint.addIceCandidate(candidate);
 			}
-			else if (room.viewers[socket.id] && room.viewers[socket.id].webRtcEndpoint) {
+			else if (m_room.viewers[socket.id] && m_room.viewers[socket.id].webRtcEndpoint) {
 				console.info('Sending viewer candidate');
-						room.viewers[socket.id].webRtcEndpoint.addIceCandidate(candidate);
+				console.log(candidate);
+				m_room.viewers[socket.id].webRtcEndpoint.addIceCandidate(candidate);
 			}
 			else {
 				console.info('Queueing candidate');
 				if (!candidatesQueue[socket.id]) {
+					console.log('REALLLY!');
 					candidatesQueue[socket.id] = [];
 				}
 				candidatesQueue[socket.id].push(candidate);
